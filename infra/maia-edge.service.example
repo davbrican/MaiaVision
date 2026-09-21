@@ -1,0 +1,21 @@
+# Sample systemd service for Raspberry Pi. Replace USER and REPO_PATH before installing.
+# sudo cp infra/maia-edge.service.example /etc/systemd/system/maia-edge.service
+# sudo systemctl daemon-reload && sudo systemctl enable --now maia-edge
+[Unit]
+Description=MaiaVision camera edge agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=USER
+WorkingDirectory=/home/USER/REPO_PATH
+EnvironmentFile=/home/USER/REPO_PATH/edge.env
+ExecStart=/home/USER/REPO_PATH/.venv-edge/bin/python -m apps.edge.agent --config config/cameras.raspberry.example.json --fps 1 --width 480 --no-vision
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
