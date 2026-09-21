@@ -1,92 +1,116 @@
 # 🐾 MaiaVision — monitor privado de mascotas
 
-Monorepo de **tres aplicaciones**: agente de cámaras Python/OpenCV/YOLO para Mac o Raspberry Pi, API privada FastAPI/SQLite y dashboard responsive React. Admite webcam integrada, móvil Android como cámara MJPEG/RTSP, cámaras WiFi RTSP/MJPEG y vídeos de prueba. De momento el servidor retransmite vistas **MJPEG/JPEG a pocos FPS** (no HD/WebRTC) con sesiones autenticadas. No almacena vídeo, audio ni imágenes: solo eventos textuales durante siete días. Compatible con una, dos o tres cámaras a la vez, siempre que los ID coincidan en ambas configuraciones.
+Monorepo de tres aplicaciones: agente Python/OpenCV/YOLO (Mac o Raspberry), API FastAPI/SQLite y dashboard responsive React. Fuentes: webcam, Android MJPEG/RTSP, cámaras IP y vídeos de prueba. La versión actual entrega JPEG/MJPEG a pocos FPS; **no** dispone aún de WebRTC/HD, grabación, alertas, audio ni identificación individual de Maia.
 
-**Estado:** versión integrada implementada en rama de feature; pruebas CI automatizadas para lógica, API y compilación web. Las pruebas reales con móviles, Raspberry, hardware, DNS y VPS requieren dispositivos y credenciales que no están disponibles en GitHub. **No se ha desplegado en tu VPS ni se puede afirmar que tres flujos/YOLO rindan adecuadamente en Raspberry sin benchmark.**
+**Estado:** funcionalidad integrada en la rama `feat/web-dashboard-multicamera-android` / [PR #1](https://github.com/davbrican/MaiaVision/pull/1). Los tests de Python/API y la compilación frontend pasan en CI; **no se ha desplegado ni probado con hardware real ni en el VPS**. `main` todavía contiene la versión anterior hasta que se revise y fusione la PR.
 
 ## Arquitectura
 
 ```text
-[Mac / Raspberry] webcam 0 + Android MJPEG + WiFi RTSP
-   apps/edge/agent.py → OpenCV + YOLO opcional → JPEG reducido (1-5 FPS por fuente)
-       └─ HTTPS + token exclusivo EDGE → VPS /api/edge/{id}/frame
-                                             ┌─ FastAPI: sesiones, eventos SQLite (7 días)
-                                             └─ retransmisión MJPEG en RAM (sin grabar)
-                                                    ↑ sesiones privadas HttpOnly
-                                              Nginx + React responsive
-                                                    ↑ HTTPS público (Caddy/proxy existente)
-                                              navegador del iPhone
+Mac / Raspberry
+  ├── webcam integrada / Android MJPEG / cámaras RTSP
+  └── apps/edge/agent.py: OpenCV + YOLO opcional, JPEG reducido 1–5 FPS
+          └── HTTPS + MAIA_EDGE_TOKEN → maiavision.dbrincau.com/api/edge/{id}/frame
+                   └── Nginx del host (HTTPS 443) → 127.0.0.1:8102 (Docker frontend)
+                          ├── React/Nginx: dashboard privado y MJPEG
+                          └── FastAPI/SQLite: sesiones, eventos (7 días), último frame en RAM
+                                    ↑
+                              navegador móvil
 ```
 
-La captura y el análisis ocurren en el ordenador o Raspberry. El servidor NO se conecta a las IP privadas de las cámaras: el agente realiza conexiones **salientes** al backend, por lo que no es necesario abrir puertos del router. Se envían imágenes reducidas por HTTPS (al verlas se procesan en el VPS). Para una instalación definitiva de alta calidad se propone MediaMTX + WebRTC/HLS y red privada, **todavía no implementados**. Esta primera versión es un monitor de baja frecuencia, no un NVR profesional ni un sistema de alarma.
+Sólo el agente de casa accede a las IP privadas de las cámaras. El VPS **no necesita puertos abiertos del router doméstico**. La cámara Android puede emitir localmente por su propio puerto `8080`; ese puerto no tiene relación con el **8102 del VPS**. Los JPEG sí salen de casa hacia el VPS por HTTPS, aunque no haya espectadores.
 
-## 1. Arranque rápido sin cámaras adicionales
-
-Requisitos: Python 3.11+, Docker + Docker Compose, una webcam, Node 22 solo si desarrollas el frontend fuera de Docker. Docker ejecuta servidor/API/frontend; el agente se ejecuta **nativamente** en el Mac para acceder a la webcam.
+## 1. Obtener la versión multicámara
 
 ```bash
 git clone https://github.com/davbrican/MaiaVision.git
 cd MaiaVision
-cp .env.example .env
-python3 scripts/hash_password.py     # Copia su línea COMPLETA en .env
-python3 -c 'import secrets; print(secrets.token_hex(32))'  # Genera 2 valores DIFERENTES para SESSION_SECRET y EDGE_TOKEN
-# Edita .env con esos valores; NO comitas .env.
-docker compose -f infra/docker-compose.yml up -d --build
-# Comprueba http://localhost:8080/api/health
+git switch feat/web-dashboard-multicamera-android
 ```
 
-Abre **http://localhost:8080** y entra con el usuario y contraseña que configuraste. Se mostrará el dashboard, pero la webcam todavía aparecerá desconectada hasta que arranques el agente:
+Requisitos: Python 3.11+, Docker y Compose para el servidor, webcam y permisos locales. Para compilar React fuera de Docker: Node 22.
+
+## 2. VPS: Docker + Nginx existente
+
+Antes de desplegar, comprueba que `8102` esté libre tanto en contenedores como en el sistema:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+sudo ss -ltnp | grep ':8102 '
+```
+
+Prepara secretos **dentro del VPS** (nunca los subas a Git):
+
+```bash
+cp .env.example .env
+python3 scripts/hash_password.py
+python3 -c 'import secrets; print(secrets.token_hex(32))'  # Ejecutar DOS veces; valores distintos
+```
+
+Sustituye todas las líneas `CHANGEME` en `.env` y configura:
+
+```dotenv
+MAIA_PUBLIC_ORIGIN=https://maiavision.dbrincau.com
+MAIA_COOKIE_SECURE=true
+MAIA_CAMERAS_JSON='{"webcam":"Webcam MacBook","android":"Android WiFi","cam3":"Pasillo"}'
+```
+
+Usa el hash completo que imprime el script, una clave de sesión distinta del token del edge y ejecuta `chmod 600 .env`. Después:
+
+```bash
+docker compose -f infra/docker-compose.yml up -d --build
+curl -fsS http://127.0.0.1:8102/api/health
+```
+
+**Puertos:** frontend `127.0.0.1:8102:80` exclusivamente; backend `8000` únicamente dentro de Docker. En `/etc/nginx/sites-available/maiavision.dbrincau.com` configura el HTTPS público para que el `location /` haga `proxy_pass http://127.0.0.1:8102;`. Para MJPEG, usa `proxy_buffering off;` y un timeout de lectura apropiado. Reutiliza el Nginx existente y no modifiques los virtual hosts de otros proyectos. Revisa [guía de despliegue y configuración Nginx](docs/deployment.md) antes de activar el dominio. No expongas 8102 al exterior.
+
+## 3. Mac: webcam apuntando al VPS
+
+El agente se ejecuta **nativamente**, no dentro de Docker, para acceder a la cámara del ordenador. Reutiliza el mismo repo/rama en el Mac y crea su entorno:
 
 ```bash
 python3 -m venv .venv-edge
 source .venv-edge/bin/activate
 python -m pip install -r apps/edge/requirements.txt
-set -a; source .env; set +a
-python -m apps.edge.agent --config config/cameras.mac.json --backend http://localhost:8080 --no-vision
+export MAIA_EDGE_TOKEN='EL_TOKEN_PRIVADO_DEL_VPS'
+python -m apps.edge.agent --config config/cameras.mac.json --backend https://maiavision.dbrincau.com --fps 2 --no-vision
 ```
 
-`--no-vision` es el modo vídeo para comprobar webcam, conexión y login sin descargar YOLO. Retíralo para la detección real; la primera ejecución descargará los pesos `yolo26n.pt`. Controla CPU/RAM y baja a `--fps 1` o `--width 480` si va lento. Detén el agente con `Ctrl+C`.
+`--no-vision` verifica vídeo y comunicaciones sin YOLO. Elimínalo para activar detección (la primera vez descarga pesos). Si el Mac usa el backend del VPS, **no** pongas `localhost:8102` en `--backend`: usaría el propio Mac. Accede al dashboard del teléfono desde `https://maiavision.dbrincau.com`.
 
-Para abrir la web desde el teléfono en la misma WiFi **en desarrollo**, el servicio está ligado solo a localhost por seguridad: configura primero un proxy HTTPS privado o sigue `docs/deployment.md`; no publiques `8080` sin protección TLS. En la instalación VPS real accederás desde el dominio HTTPS, desde cualquier red.
+## 4. Android como segunda cámara
 
-## 2. Añadir Android como segunda cámara
-
-Consulta [docs/android.md](docs/android.md) para instrucciones de la aplicación IP Webcam, comprobación de la URL real y medidas de seguridad. Tras iniciar su servidor de vídeo en la misma WiFi que el Mac:
+Instala una aplicación de cámara IP con MJPEG HTTP/RTSP, por ejemplo [IP Webcam](https://play.google.com/store/apps/details?id=com.pas.webcam). Conecta Android y Mac a la misma WiFi, inicia servidor, comprueba la URL real del flujo (la portada HTML no es el vídeo) y exporta:
 
 ```bash
-export MAIA_ANDROID_URL='http://192.168.1.50:8080/video'  # Sustituir por IP/puerto/ruta REALES
-python -m apps.edge.agent --config config/cameras.android.example.json --backend http://localhost:8080 --no-vision
+export MAIA_ANDROID_URL='http://IP_LOCAL_ANDROID:PUERTO/RUTA_DE_VIDEO'
+python -m apps.edge.agent --config config/cameras.android.example.json --backend https://maiavision.dbrincau.com --fps 2 --no-vision
 ```
 
-El mismo agente abrirá la webcam y el Android simultáneamente. El ID `android` ya figura en `.env.example`; una tercera cámara puede usar `cam3` en `config/cameras.raspberry.example.json`. Variables con contraseñas de cámaras deben ir en `edge.env` (ignorado por Git) y nunca en los JSON versionados. Mantén desactivadas las opciones de nube de la aplicación Android si quieres todo el vídeo restringido a tu infraestructura.
+El agente abre **webcam + Android**. `MAIA_EDGE_TOKEN` debe estar exportado. No abras puertos de cámaras en el router. [Instrucciones detalladas](docs/android.md).
 
-## 3. Raspberry + tres cámaras + VPS
+## 5. Desarrollo completamente local (opcional)
 
-Consulta [docs/deployment.md](docs/deployment.md). En el VPS prepara un dominio, DNS, HTTPS y `.env` de producción (`MAIA_PUBLIC_ORIGIN=https://tu-dominio`, `MAIA_COOKIE_SECURE=true`). `docker compose -f infra/docker-compose.yml up -d --build` escucha SOLO en `127.0.0.1:8080`: configura Caddy/Nginx del host como proxy TLS. En la Raspberry configura `edge.env` con únicamente el token y las URL de las cámaras, instala las dependencias ARM compatibles y ejecuta el agente con `--config config/cameras.raspberry.example.json --backend https://tu-dominio`. No abras RTSP de cámaras a Internet.
+Si el servidor Docker corre en el propio Mac, en el `.env` LOCAL usa `MAIA_PUBLIC_ORIGIN=http://localhost:8102` y `MAIA_COOKIE_SECURE=false` (no usar esto en VPS), inicia Compose, visita `http://localhost:8102` y ejecuta `--backend http://localhost:8102`. El puerto de la aplicación Android es independiente.
 
-## Servicios y código
+## 6. Raspberry y tres cámaras (futuro)
 
-| Ruta | Responsabilidad |
-| --- | --- |
-| `apps/edge/agent.py` | Varias fuentes OpenCV, un detector YOLO compartido, rastreador por cámara, reconexión y envío HTTPS. |
-| `apps/backend/main.py` | Login, cookies firmadas, lista de cámaras, JPEG/MJPEG autenticado, recepción con token y eventos SQLite. |
-| `apps/frontend/` | React + TS + Vite, login responsive, selector, mosaico, reproducción y eventos. |
-| `infra/docker-compose.yml` | API + frontend Nginx. Datos SQLite persistidos en `data/`. |
-| `config/` | Fuentes de ejemplo Mac, Android y Raspberry. URLs privadas mediante variables de entorno. |
-| `scripts/hash_password.py` | Hash PBKDF2 con sal de contraseña de acceso. |
-| `main.py` | Monitor OpenCV legado, solo local; se conserva por compatibilidad. |
-| `AGENTS.md` | Contrato técnico para agentes, seguridad, arquitectura y criterios de aceptación. |
+Instala Edge en la Pi ARM64, define `MAIA_EDGE_TOKEN` y URLs RTSP/MJPEG en un `edge.env` protegido, utiliza `config/cameras.raspberry.example.json` y el mismo dominio HTTPS. Prueba primero `--fps 1 --width 480 --no-vision`; activa YOLO gradualmente después de medir CPU, memoria y temperatura. [Guía de migración](docs/deployment.md). No afirmar rendimiento de tres detectores sin medir.
 
-## API mínima
+## Componentes y API
 
-- `POST /api/login`, `POST /api/logout`, `GET /api/me`: cookie HttpOnly SameSite Strict; mutaciones web exigen origen exacto.
-- `GET /api/cameras`, `/api/cameras/{id}/snapshot`, `/api/cameras/{id}/stream`, `GET /api/events`: sesión obligatoria.
-- `POST /api/edge/{id}/frame`: `Authorization: Bearer <MAIA_EDGE_TOKEN>`, `Content-Type: image/jpeg`, máximo 500 kB, ID permitido.
-- `GET /api/health`: únicamente estado básico. No se publican tokens ni URL privadas en API o frontend.
+| Ruta | Contenido |
+|---|---|
+| `apps/edge/agent.py` | Captura multi-fuente, reconexión, tracker por cámara, inferencia YOLO opcional y envío HTTPS. |
+| `apps/backend/main.py` | Login, sesiones, JPEG/MJPEG autenticado, lista de cámaras, eventos SQLite. |
+| `apps/frontend/` | React/TS, login, selector/mosaico, reproducción y eventos. |
+| `infra/docker-compose.yml` | Backend y frontend; proxy frontend ligado sólo a `127.0.0.1:8102`. |
+| `config/` | Ejemplos Mac, Android, Pi; URLs reales mediante variables entorno. |
+| `AGENTS.md` | Estándares de implementación, privacidad y criterios de aceptación. |
 
-Los JPEG están temporalmente **en memoria** y no se guardan en disco; los eventos sí se guardan en SQLite durante siete días. Si el backend reinicia, las vistas desaparecen hasta recibir nuevos fotogramas. Esta versión usa un proceso Uvicorn, ya que los fotogramas están en memoria local del proceso. No escales a múltiples workers sin mover el relay a un media server/broker.
+Rutas API: `POST /api/login`, `/api/logout`, `GET /api/me`, `/api/cameras`, `/api/cameras/{id}/snapshot`, `/api/cameras/{id}/stream`, `/api/events` (sesión), `POST /api/edge/{id}/frame` (token edge), `GET /api/health`. Los JPEG sólo permanecen temporalmente en RAM; eventos de texto en SQLite durante siete días. Un solo worker de backend por su relay en memoria.
 
-## Pruebas
+## Tests
 
 ```bash
 python -m pip install -r apps/backend/requirements.txt
@@ -95,14 +119,4 @@ python -m compileall -q main.py maia_vision apps tests scripts
 cd apps/frontend && npm install && npm run build
 ```
 
-GitHub Actions ejecuta sintaxis, tests sin cámara y compilación React. Solo una prueba con dispositivos reales puede validar calidad, FPS, temperatura, red, reconexión y reproducción en Safari iOS.
-
-## Seguridad, limitaciones y siguientes fases
-
-- `.env` y `edge.env` NO se suben. Cambia todos los secretos y utiliza HTTPS real antes de abrir el dominio público. Las credenciales de Android/RTSP permanecen en la Raspberry/Mac.
-- El administrador es **un único usuario**, con inicio de sesión y 8 intentos fallidos por IP/15 minutos por proceso; sin MFA ni gestión multiusuario. Los tokens de edge son compartidos por los agentes y deben rotarse si se filtran. Evita accesos ajenos al área vigilada.
-- Este MVP envía imágenes al VPS aunque no haya espectadores; configura FPS bajo, estima ancho de banda y respeta privacidad de personas que puedan salir en cámara. Sin audio, grabaciones, zonas, alertas, notificaciones ni identificación individual de Maia.
-- `QUIETA` solo expresa desplazamiento pequeño del centro de una caja; `NO DETECTADA` no confirma que el animal esté fuera de la habitación ni permite diagnosticar ansiedad o sueño.
-- Futuro: autenticación individual por agente, retención configurable, heartbeats, streaming adaptativo MediaMTX/WebRTC, desacoplar inferencia en Raspberry, PWA, zonas, alertas y análisis de ladridos opt-in (micrófono + clasificador aparte).
-
-No se ha elegido una licencia del código propio. Si se redistribuye/comercializa la integración con Ultralytics, revisar su licencia AGPL-3.0/Enterprise y dependencias.
+CI no sustituye pruebas de cámaras físicas, TLS, Safari y despliegue. Sigue pendiente MediaMTX/WebRTC, alertas, audio, zonas, grabaciones, PWA y multiusuario/MFA. No atribuir sueño, ansiedad ni identidad de Maia a un detector genérico: `QUIETA` sólo indica un desplazamiento aparente pequeño y `NO DETECTADA` significa que el detector no la ve. Revisa licencias de Ultralytics antes de redistribuir/comercializar el producto. No hay licencia propia del proyecto definida.
