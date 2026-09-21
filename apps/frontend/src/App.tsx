@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import InsightsPanel from './InsightsPanel';
+import CameraCard, { type Camera } from './CameraCard';
 
-type Camera = { id: string; name: string; online: boolean; status: string; seen_at: string | null };
 type Event = { id: number; camera_id: string; timestamp: string; event: string; status: string };
 
 const labels: Record<string, string> = {
@@ -17,19 +17,6 @@ async function api<T>(url: string, options?: RequestInit): Promise<T> {
     throw new Error(message);
   }
   return response.json() as Promise<T>;
-}
-
-function CameraCard({ camera, large = false }: { camera: Camera; large?: boolean }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [camera.id, camera.online]);
-  return <article className={'camera-card ' + (large ? 'large' : '')}>
-    <div className="camera-header"><strong>{camera.name}</strong><span className={'dot-label ' + (camera.online ? 'online' : '')}>{camera.online ? '● En directo' : '○ Sin señal'}</span></div>
-    <div className="camera-screen">
-      {camera.online && !failed ? <img src={`/api/cameras/${encodeURIComponent(camera.id)}/stream`} alt={`Vídeo en directo: ${camera.name}`} onError={() => setFailed(true)}/> :
-        <div className="offline"><span className="offline-icon">◉</span><strong>{failed ? 'No se ha podido reproducir' : 'Cámara desconectada'}</strong><small>Comprueba la conexión del agente</small></div>}
-    </div>
-    <footer><span>{camera.online ? camera.status : 'Esperando señal'}</span><small>{camera.seen_at ? new Date(camera.seen_at).toLocaleTimeString('es-ES') : 'Nunca conectada'}</small></footer>
-  </article>;
 }
 
 function Login({ onLogin }: { onLogin: () => void }) {
@@ -85,7 +72,7 @@ export default function App() {
 
   async function logout() {
     try { await api('/logout', { method: 'POST' }); }
-    finally { setAuthenticated(false); setCameras([]); setEvents([]); }
+    finally { setAuthenticated(false); setCameras([]); setEvents([]); setSelected('all'); }
   }
 
   if (authenticated === null) return <div className="boot">🐾 MaiaVision</div>;
@@ -103,7 +90,8 @@ export default function App() {
       <InsightsPanel />
       <section className="section-header"><div><p className="eyebrow">CÁMARAS</p><h2>Vista en directo</h2></div><span className="hint">Vista JPEG · {cameras.length} fuentes configuradas</span></section>
       <nav className="tabs" aria-label="Seleccionar cámara"><button className={selected === 'all' ? 'active' : ''} onClick={() => setSelected('all')}>Todas</button>{cameras.map(camera => <button key={camera.id} className={selected === camera.id ? 'active' : ''} onClick={() => setSelected(camera.id)}>{camera.name}{camera.online && <span className="mini-dot" />}</button>)}</nav>
-      {visible.length ? <div className={'camera-grid ' + (visible.length === 1 ? 'single' : '')}>{visible.map(camera => <CameraCard key={camera.id} camera={camera} large={visible.length === 1}/>)}</div> : <div className="empty">No hay cámaras para esta vista.</div>}
+      {selected !== 'all' && <p className="camera-view-help">Pulsa la imagen para verla a pantalla completa. La captura guarda el último fotograma disponible en tu dispositivo.</p>}
+      {visible.length ? <div className={'camera-grid ' + (visible.length === 1 ? 'single' : '')}>{visible.map(camera => <CameraCard key={camera.id} camera={camera} large={selected !== 'all'} onSelect={setSelected}/>)}</div> : <div className="empty">No hay cámaras para esta vista.</div>}
       <section className="lower-grid"><article className="panel"><div className="panel-heading"><div><p className="eyebrow">ACTIVIDAD</p><h2>Últimos eventos</h2></div><span className="hint">Actualización cada 5 s</span></div>{currentEvents.length ? <div className="events">{currentEvents.slice(0, 12).map(event => <div className="event" key={event.id}><span className="event-bullet"/><div><strong>{labels[event.event] || event.event}</strong><small>{cameras.find(camera => camera.id === event.camera_id)?.name || event.camera_id} · {event.status}</small></div><time>{new Date(event.timestamp).toLocaleTimeString('es-ES')}</time></div>)}</div> : <div className="empty">Todavía no hay eventos. Aparecerán cuando el detector observe cambios.</div>}</article><article className="panel about"><p className="eyebrow">INFORMACIÓN</p><h2>Cómo funciona</h2><p>El agente procesa fotogramas en tu ordenador o Raspberry Pi y envía vistas JPEG reducidas y eventos al servidor.</p><p>El vídeo no se graba ni se almacena por defecto; los eventos se conservan siete días. «Sin detección» no significa que Maia haya salido de la habitación.</p><div className="info-pill">🔐 Acceso mediante sesión privada</div><div className="info-pill">📷 Compatible con webcam, Android e IP</div><div className="info-pill">⚡ Vista ligera: no equivale a vídeo HD de 30 FPS</div></article></section>
       <footer className="site-footer">MaiaVision · Hecho para vigilar actividad observable, respetando la privacidad.</footer>
     </main>
