@@ -1,0 +1,4 @@
+# Ventana OpenCV (NO instalar simultáneamente opencv-python-headless).
+opencv-python>=4.8
+# YOLO26 compatible con versiones recientes; incluye PyTorch y dependencias necesarias.
+ultralytics>=8.4
