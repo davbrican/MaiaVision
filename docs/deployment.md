@@ -2,33 +2,53 @@
 
 ## Topología de seguridad
 
-- En la casa: webcam Mac o Raspberry con fuentes Android MJPEG y cámaras WiFi RTSP. Solo el agente contacta al VPS mediante una petición HTTPS **saliente**. No publiques HTTP/RTSP de cámaras en el router.
-- En el VPS: Docker Compose con Nginx/React (solo `127.0.0.1:8080` del host) y FastAPI/SQLite **no expuesto públicamente**. Un reverse proxy (Caddy/Nginx existente) escucha 443 con certificado válido y enruta a `127.0.0.1:8080`. No expongas el puerto 8080 públicamente.
-- Navegadores: web desde el dominio HTTPS, cookie HttpOnly Secure SameSite Strict; frames MJPEG y API protegidos por la misma cookie. HTTPS también cubre las subidas del agente.
+- En casa: webcam del Mac o Raspberry conectada a Android MJPEG y cámaras WiFi RTSP. El agente envía imágenes JPEG y eventos al VPS por peticiones HTTPS **salientes**. No publiques los puertos HTTP/RTSP de cámaras en el router.
+- VPS: Docker Compose con Nginx/React escuchando **solo en `127.0.0.1:8102`**, FastAPI/SQLite dentro de la red Docker sin puerto público. Nginx del HOST (ya existente) termina HTTPS 443 y enruta `maiavision.dbrincau.com` a `http://127.0.0.1:8102`.
+- Navegadores: dominio HTTPS, cookie HttpOnly Secure SameSite Strict; imágenes MJPEG y API protegidas por la sesión. HTTPS también protege las subidas del agente.
+- El `8080` que pudiera mostrar IP Webcam **en el Android** pertenece a la red local y no tiene relación con el `8102` reservado para MaiaVision en el VPS.
 
-## VPS — pasos con datos reales (no están disponibles en el repositorio)
+## VPS — despliegue en el host con otros proyectos Docker
 
-1. Apunta un dominio/subdominio propio al VPS y comprueba puertos 80/443 y certificado TLS. No inventar DNS, IP ni rutas del servidor.
-2. Copia el repositorio al VPS. `cp .env.example .env`; `python3 scripts/hash_password.py`, copia línea hash completa y genera 2 secretos diferentes usando `python3 -c 'import secrets; print(secrets.token_hex(32))'` dos veces. Asigna `MAIA_PUBLIC_ORIGIN=https://TU_DOMINIO`, `MAIA_COOKIE_SECURE=true` y los IDs de cámara deseados en `MAIA_CAMERAS_JSON`. Ejecuta `chmod 600 .env`. NUNCA publiques el hash, contraseña, token ni `.env`.
-3. Ejecuta `docker compose -f infra/docker-compose.yml up -d --build`; comprueba `curl -fsS http://127.0.0.1:8080/api/health`. Datos SQLite en `data/` (persisten al recrear contenedor).
-4. Configura el reverse proxy que ya tengas o usa `infra/Caddyfile.example` como plantilla sustituyendo dominio. No sobreescribas la configuración de otros proyectos del VPS. Para MJPEG, desactiva buffering y permite streams duraderos; Caddy `flush_interval -1` en el ejemplo. Comprueba `https://TU_DOMINIO/api/health` y login con navegador. El origen configurado debe coincidir exactamente con el origen del navegador, sin barra final.
-5. Revisa firewall: expuestos solo 80/443 y SSH administrado; localhost:8080 NO público, backend 8000 NO publicado. Prueba acceso desde datos móviles, sesión inválida para imágenes, salida/logout, y restauración de la copia de seguridad SQLite cifrada si la necesitas.
+1. Configura el DNS A/AAAA de `maiavision.dbrincau.com` hacia tu VPS. Antes de desplegar, comprueba que `8102` esté libre tanto en Docker como en los procesos del host: `docker ps --format 'table {{.Names}}\t{{.Ports}}'` y `sudo ss -ltnp | grep ':8102 '`. La ausencia en `docker ps` por sí sola no garantiza disponibilidad.
+2. Clona el repositorio y usa la rama `feat/web-dashboard-multicamera-android` hasta que se apruebe y fusione la PR. Ejecuta `cp .env.example .env`, `python3 scripts/hash_password.py` y genera dos secretos **distintos** con `python3 -c 'import secrets; print(secrets.token_hex(32))'`. Configura `MAIA_PUBLIC_ORIGIN=https://maiavision.dbrincau.com`, `MAIA_COOKIE_SECURE=true` y `MAIA_CAMERAS_JSON` con IDs idénticos a las fuentes del agente. Nunca publiques `.env`; ejecuta `chmod 600 .env`.
+3. Arranca `docker compose -f infra/docker-compose.yml up -d --build` desde la raíz del repo y verifica `curl -fsS http://127.0.0.1:8102/api/health`. La base SQLite persiste en `data/`. Docker publica únicamente `127.0.0.1:8102:80` para frontend; el `8000` de FastAPI se expone solo internamente y puede coexistir con otros contenedores que utilicen 8000.
+4. Reutiliza el Nginx existente del host; no instales otro proxy ni sobrescribas configuraciones ajenas. Crea un bloque `server_name maiavision.dbrincau.com` que, tras habilitar TLS, use esta sección (integrada en el bloque HTTPS correspondiente):
 
-## Mac — desarrollo
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8102;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+}
+```
 
-Arranca Docker con `.env` de desarrollo (`http://localhost:8080`, cookie secure=false). En un venv aislado instala `apps/edge/requirements.txt`, carga `.env` mediante `set -a; source .env; set +a` en shell **solo si controlas y has revisado el fichero local** y ejecuta `python -m apps.edge.agent --config config/cameras.mac.json --backend http://localhost:8080 --no-vision`. Posteriormente activa YOLO quitando la bandera.
+5. Verifica `sudo nginx -t` **antes** de recargar con `sudo systemctl reload nginx`. Obtén o renueva certificado HTTPS según el procedimiento vigente del host (por ejemplo Certbot, si ya lo utilizas). Comprueba `https://maiavision.dbrincau.com/api/health`, login y visualización desde datos móviles. `MAIA_PUBLIC_ORIGIN` debe coincidir exactamente con `https://maiavision.dbrincau.com` (sin `/api`, sin puerto, sin barra final).
+6. No publiques `8102` en el firewall; sólo Nginx expone 80/443 y SSH administrado. Prueba que un navegador sin login no pueda ver imágenes ni eventos; revisa logout, cookies Secure y copias cifradas de SQLite si las necesitas.
 
-Para desarrollar React por separado: backend nativo `uvicorn apps.backend.main:app --reload --port 8000` con `MAIA_PUBLIC_ORIGIN=http://localhost:5173` y cookie Secure=false; `cd apps/frontend && npm install && npm run dev` (Vite proxifica `/api`). Evita simultanear backend nativo y Docker en puertos superpuestos.
+## Mac — ejecutar edge apuntando al VPS
+
+Concede permiso de cámara a Terminal/iTerm. Crea un venv, instala `apps/edge/requirements.txt` y exporta **solo en tu Mac** `MAIA_EDGE_TOKEN` (el mismo valor secreto del VPS), y opcionalmente `MAIA_ANDROID_URL` con la URL de vídeo del Android accesible por la misma WiFi. Arranca:
+
+```bash
+python -m apps.edge.agent --config config/cameras.mac.json --backend https://maiavision.dbrincau.com --fps 2
+# O webcam + Android:
+python -m apps.edge.agent --config config/cameras.android.example.json --backend https://maiavision.dbrincau.com --fps 2
+```
+
+Usa `--no-vision` si quieres probar primero envío sin YOLO. **Nunca apuntes el agente del Mac a `127.0.0.1:8102` si el backend está en el VPS**: esa dirección indicaría el propio Mac. El agente utiliza el dominio público por HTTPS; `8102` sólo es el destino interno del proxy del VPS.
+
+Para desarrollo enteramente local: `.env` con `MAIA_PUBLIC_ORIGIN=http://localhost:8102` y `MAIA_COOKIE_SECURE=false`, arranca Docker y usa `--backend http://localhost:8102`. El frontend con Vite por separado funciona en 5173 y el backend nativo en 8000 sólo si esos puertos están libres.
 
 ## Raspberry — futura migración
 
-1. Raspberry Pi con sistema ARM64, buena alimentación, refrigeración, SSD recomendado para sistema y suficientes recursos según benchmarks. Instala Python 3.11+ y crea `.venv-edge`; `pip install -r apps/edge/requirements.txt`. PyTorch/Ultralytics para ARM puede necesitar adaptaciones por OS/modelo: valida instalación y FPS reales antes de instalar permanentemente.
-2. Crea `edge.env` **solo en la Raspberry** (archivo ignorado), con `MAIA_EDGE_TOKEN=<MISMO_TOKEN_DEL_VPS>` y las variables `MAIA_SALON_URL`, `MAIA_ANDROID_URL`, `MAIA_PASILLO_URL` en red local. Preferir credenciales de cámara distintas y seguras. Ejecuta `chmod 600 edge.env` y `set -a; source edge.env; set +a` desde una shell de confianza.
-3. Ejecuta `python -m apps.edge.agent --config config/cameras.raspberry.example.json --backend https://TU_DOMINIO --fps 1 --width 480 --no-vision`. Verifica recepción de las TRES cámaras con vídeo sin YOLO; activa gradualmente modelo y mide CPU, RAM, latencia y temperatura. Usa ID de cámara idénticos a `MAIA_CAMERAS_JSON` en VPS.
-4. Cuando el agente funcione, conviértelo en un servicio systemd gestionado mediante un usuario no privilegiado, directorio de trabajo del repo, EnvironmentFile apuntando a `edge.env` protegido y ExecStart con Python de venv. Evita registrar credenciales o URL completas. Define reinicio controlado y prueba recuperación tras reiniciar.
+1. Raspberry Pi ARM64, alimentación, refrigeración y SSD opcional. Instala Python 3.11+, venv y `apps/edge/requirements.txt`; valida PyTorch/Ultralytics en su OS y mide FPS, RAM y temperatura antes de activar inferencia de tres cámaras.
+2. Crea `edge.env` privado con `MAIA_EDGE_TOKEN` y `MAIA_SALON_URL`, `MAIA_ANDROID_URL`, `MAIA_PASILLO_URL` locales; `chmod 600 edge.env`. IDs idénticos a `MAIA_CAMERAS_JSON`.
+3. Ejecuta `python -m apps.edge.agent --config config/cameras.raspberry.example.json --backend https://maiavision.dbrincau.com --fps 1 --width 480 --no-vision`, valida las tres cámaras sin YOLO y después habilita detección gradualmente.
+4. Usa `infra/maia-edge.service.example` como plantilla systemd con usuario sin privilegios, rutas reales y EnvironmentFile protegido. No guardes contraseñas en el repositorio.
 
-**Este proyecto no despliega por sí mismo sobre tu VPS ni instala apps en un móvil**: esos pasos requieren acceso a tus equipos, DNS, credenciales privadas y validación por tu parte. Las instrucciones anteriores son comandos ejecutables y no implican que hayan sido ejecutados sobre tu infraestructura.
-
-## Escalado posterior
-
-Actualmente el backend procesa JPEG en RAM y trabaja con un único worker Uvicorn; cada agente sube vistas aunque nadie mire el dashboard. Es práctico a 1–3 FPS/cámara pero no equivale a stream HD de 30 FPS ni permite escalar a múltiples réplicas. Para calidad elevada separar media: RTSP local→MediaMTX→WebRTC/HLS, privacidad con autentificación propia de streams e infraestructura ICE/TURN si es necesaria. Requiere más pruebas de redes domésticas, Android/iPhone y coste de ancho de banda, y queda como fase posterior.
+**No se ha desplegado automáticamente en el VPS ni probado con las cámaras físicas.** Esta guía no implica acceso a tu servidor. La retransmisión actual es JPEG/MJPEG en memoria a baja frecuencia con un solo worker; MediaMTX/WebRTC, grabaciones y streaming HD son fases futuras.
