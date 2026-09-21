@@ -20,6 +20,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from apps.backend.insights import InsightsStore
+
 CAMERA_ID = re.compile(r"^[a-z0-9_-]{1,32}$")
 EVENTS = {"appearance", "disappearance", "motion_start", "motion_stop"}
 STATUSES = {"NO DETECTADA", "SIN REFERENCIA", "QUIETA", "MOVIMIENTO", "SIN ANALISIS"}
@@ -135,7 +137,7 @@ class EventStore:
     def append(self, timestamp: str, camera_id: str, event: str, status: str) -> None:
         with self.lock, sqlite3.connect(self.path) as connection:
             connection.execute("INSERT INTO events(timestamp,camera_id,event,status) VALUES (?,?,?,?)", (timestamp, camera_id, event, status))
-            connection.execute("DELETE FROM events WHERE timestamp < datetime('now', '-7 days')")
+            connection.execute("DELETE FROM events WHERE datetime(timestamp) < datetime('now', '-7 days')")
 
     def recent(self, camera_id: str | None, limit: int) -> list[dict]:
         query = "SELECT id,timestamp,camera_id,event,status FROM events"
@@ -160,6 +162,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="MaiaVision API", docs_url=None, redoc_url=None, openapi_url=None)
     cameras = {camera_id: CameraFrame(name=name) for camera_id, name in config.cameras.items()}
     store = EventStore(config.database)
+    insights = InsightsStore(config.database)
     failures: dict[str, list[float]] = {}
     login_lock = threading.Lock()
 
@@ -167,6 +170,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def startup() -> None:
         config.validate()
         store.init()
+        insights.init()
 
     def require_user(request: Request) -> None:
         if not check_session(config, request.cookies.get(COOKIE)):
@@ -255,13 +259,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 with state.condition:
                     state.condition.wait_for(lambda: state.version != last, timeout=12)
                     if state.version == last:
-                        # Multipart heartbeat, no fake image.
-                        yield b"--frame\r\nContent-Type: text/plain\r\n\r\nwaiting\r\n"
-                        continue
-                    last = state.version
-                    jpeg = state.jpeg if time.monotonic() - state.seen_mono < 20 else None
-                if jpeg:
-                    yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n")
+                        payload = b"--frame\r\nContent-Type: text/plain\r\n\r\nwaiting\r\n"
+                    else:
+                        last = state.version
+                        jpeg = state.jpeg if time.monotonic() - state.seen_mono < 20 else None
+                        payload = (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n") if jpeg else b""
+                if payload:
+                    yield payload  # Never hold the condition lock during network backpressure.
 
         return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
@@ -273,6 +277,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not 1 <= limit <= 200:
             raise HTTPException(status_code=422, detail="limit debe estar entre 1 y 200")
         return store.recent(camera_id, limit)
+
+    @app.get("/api/insights")
+    def get_insights(request: Request, window_minutes: int = 60) -> dict:
+        require_user(request)
+        if not 15 <= window_minutes <= 1440:
+            raise HTTPException(status_code=422, detail="window_minutes debe estar entre 15 y 1440")
+        return insights.summary(config.cameras, window_minutes)
 
     @app.post("/api/edge/{camera_id}/frame")
     async def receive_frame(camera_id: str, request: Request) -> dict:
@@ -301,6 +312,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             state.condition.notify_all()
         if event:
             store.append(timestamp, camera_id, event, status)
+        insights.record(camera_id, status)
         return {"ok": True}
 
     return app
