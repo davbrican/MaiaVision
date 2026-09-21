@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import InsightsPanel from './InsightsPanel';
 
 type Camera = { id: string; name: string; online: boolean; status: string; seen_at: string | null };
 type Event = { id: number; camera_id: string; timestamp: string; event: string; status: string };
@@ -99,6 +100,7 @@ export default function App() {
     <main className="dashboard">
       <section className="intro"><div><p className="eyebrow">PANEL DE CONTROL</p><h1>Tu casa, <em>siempre cerca.</em></h1><p className="muted">Monitoriza las cámaras y consulta los movimientos observados. Los estados son estimaciones visuales, no diagnósticos.</p></div><div className="metric"><span>Cámaras activas</span><strong>{live}<small> / {cameras.length}</small></strong><i className="metric-line" /></div></section>
       {error && <div className="error-banner" role="alert">{error} <button onClick={() => { void refresh(); }}>Reintentar</button></div>}
+      <InsightsPanel />
       <section className="section-header"><div><p className="eyebrow">CÁMARAS</p><h2>Vista en directo</h2></div><span className="hint">Vista JPEG · {cameras.length} fuentes configuradas</span></section>
       <nav className="tabs" aria-label="Seleccionar cámara"><button className={selected === 'all' ? 'active' : ''} onClick={() => setSelected('all')}>Todas</button>{cameras.map(camera => <button key={camera.id} className={selected === camera.id ? 'active' : ''} onClick={() => setSelected(camera.id)}>{camera.name}{camera.online && <span className="mini-dot" />}</button>)}</nav>
       {visible.length ? <div className={'camera-grid ' + (visible.length === 1 ? 'single' : '')}>{visible.map(camera => <CameraCard key={camera.id} camera={camera} large={visible.length === 1}/>)}</div> : <div className="empty">No hay cámaras para esta vista.</div>}
