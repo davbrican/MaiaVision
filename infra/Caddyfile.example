@@ -1,0 +1,9 @@
+# Replace with your real domain and configure DNS A/AAAA records to your VPS.
+# Caddy must run on the VPS host; it terminates HTTPS before proxying to
+# MaiaVision, bound exclusively to loopback (127.0.0.1:8080).
+maia.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8080 {
+        flush_interval -1
+    }
+}

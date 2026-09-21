@@ -1,0 +1,4 @@
+# Use a separate venv from legacy main.py (which requires opencv-python GUI).
+opencv-python-headless>=4.9,<5
+requests>=2.32,<3
+ultralytics>=8.3,<9

@@ -1,0 +1,6 @@
+{
+  "cameras": [
+    {"id": "webcam", "name": "Webcam MacBook", "type": "webcam", "device": 0},
+    {"id": "android", "name": "Android WiFi", "type": "android", "source_env": "MAIA_ANDROID_URL"}
+  ]
+}
