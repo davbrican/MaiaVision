@@ -1,6 +1,7 @@
 """Objective sampled activity indicators without real camera or dog model."""
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from apps.backend.insights import InsightsStore
@@ -36,8 +37,8 @@ class InsightsTests(unittest.TestCase):
         self.assertEqual(salon['activity_percent'], 50)
         self.assertEqual(phone['activity_percent'], 0)
         self.assertEqual(result['last_detection']['camera_id'], 'android')
-        self.assertEqual(salon['last_seen_at'], '2027-01-15T08:00:11+00:00' if False else salon['last_seen_at'])
-        self.assertIsNotNone(salon['last_seen_at'])
+        expected = datetime.fromtimestamp(self.now - 29, timezone.utc).isoformat(timespec='seconds')
+        self.assertEqual(salon['last_seen_at'], expected)
 
     def test_last_detection_preserved_outside_window_but_only_seven_days(self):
         self.store.record('webcam', 'QUIETA', now=self.now - 7200)
