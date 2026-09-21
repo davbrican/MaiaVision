@@ -36,10 +36,13 @@ class WebTests(unittest.TestCase):
 
     def test_password_required_and_origin_checked(self):
         self.assertEqual(self.client.get("/api/cameras").status_code, 401)
+        self.assertEqual(self.client.get("/api/insights").status_code, 401)
         self.assertEqual(self.client.post("/api/login", json={"username":"admin","password":"correct-passphrase"}).status_code, 403)
         self.assertEqual(self.client.post("/api/login", json={"username":"admin","password":"bad"}, headers={"Origin":"http://localhost:8080"}).status_code, 401)
         self.assertEqual(self.login().status_code, 200)
         self.assertEqual(len(self.client.get("/api/cameras").json()), 2)
+        self.assertIsNone(self.client.get("/api/insights").json()["last_detection"])
+        self.assertEqual(self.client.get("/api/insights?window_minutes=2").status_code, 422)
 
     def test_edge_token_and_camera_allowlist(self):
         jpeg = b"\xff\xd8example\xff\xd9"
@@ -54,11 +57,15 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/cameras/webcam/snapshot").content, jpeg)
         self.assertEqual(self.client.get("/api/events").json()[0]["event"], "appearance")
         self.assertTrue(self.client.get("/api/cameras").json()[0]["online"])
+        summary = self.client.get("/api/insights?window_minutes=60").json()
+        self.assertEqual(summary["last_detection"]["camera_id"], "webcam")
+        self.assertEqual(summary["cameras"][0]["activity_percent"], 100)
 
     def test_logout(self):
         self.login()
         self.assertEqual(self.client.post("/api/logout", headers={"Origin":"http://localhost:8080"}).status_code, 200)
         self.assertEqual(self.client.get("/api/me").status_code, 401)
+        self.assertEqual(self.client.get("/api/insights").status_code, 401)
 
     def test_edge_config_requires_env_and_https(self):
         self.assertEqual(backend_address("http://localhost:8080"), "http://localhost:8080")
