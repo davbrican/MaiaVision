@@ -12,10 +12,11 @@ type Props = {
   camera: Camera;
   large: boolean;
   onSelect: (id: string) => void;
+  streamRevision: number;
 };
 
 /** The stream and snapshot stay behind the existing authenticated, same-origin API. */
-export default function CameraCard({ camera, large, onSelect }: Props) {
+export default function CameraCard({ camera, large, onSelect, streamRevision }: Props) {
   const cardRef = useRef<HTMLElement | null>(null);
   const [failed, setFailed] = useState(false);
   const [nativeFullscreen, setNativeFullscreen] = useState(false);
@@ -27,7 +28,7 @@ export default function CameraCard({ camera, large, onSelect }: Props) {
   useEffect(() => {
     setFailed(false);
     setSnapshotError('');
-  }, [camera.id, camera.online]);
+  }, [camera.id, camera.online, streamRevision]);
 
   useEffect(() => {
     const syncFullscreen = () => setNativeFullscreen(document.fullscreenElement === cardRef.current);
@@ -137,7 +138,7 @@ export default function CameraCard({ camera, large, onSelect }: Props) {
           ? (fullscreen ? `Salir de pantalla completa de ${camera.name}` : `Pantalla completa de ${camera.name}`)
           : `Abrir vista individual de ${camera.name}`}>
         {camera.online && !failed
-          ? <img src={`/api/cameras/${encodeURIComponent(camera.id)}/stream`}
+          ? <img key={streamRevision} src={`/api/cameras/${encodeURIComponent(camera.id)}/stream?revision=${streamRevision}`}
               alt={`Vídeo en directo: ${camera.name}`} onError={() => setFailed(true)} />
           : <span className="offline"><span className="offline-icon">◉</span>
               <strong>{failed ? 'No se ha podido reproducir' : 'Cámara desconectada'}</strong>
