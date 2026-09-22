@@ -14,13 +14,14 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from apps.backend.insights import InsightsStore
+from apps.backend.ptz import PtzMailbox
 
 CAMERA_ID = re.compile(r"^[a-z0-9_-]{1,32}$")
 EVENTS = {"appearance", "disappearance", "motion_start", "motion_stop"}
@@ -157,12 +158,17 @@ class Login(BaseModel):
     password: str
 
 
+class PtzMove(BaseModel):
+    direction: Literal["left", "right", "up", "down", "stop"]
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or Settings.from_env()
     app = FastAPI(title="MaiaVision API", docs_url=None, redoc_url=None, openapi_url=None)
     cameras = {camera_id: CameraFrame(name=name) for camera_id, name in config.cameras.items()}
     store = EventStore(config.database)
     insights = InsightsStore(config.database)
+    ptz = PtzMailbox(set(cameras))
     failures: dict[str, list[float]] = {}
     login_lock = threading.Lock()
 
@@ -233,8 +239,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = []
         for camera_id, state in cameras.items():
             with state.condition:
+                online = state.jpeg is not None and time.monotonic() - state.seen_mono < 20
                 result.append({"id": camera_id, "name": state.name, "status": state.status,
-                               "online": state.jpeg is not None and time.monotonic() - state.seen_mono < 20,
+                               "online": online, "ptz": ptz.ready(camera_id) and online,
                                "seen_at": state.seen_at})
         return result
 
@@ -284,6 +291,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not 15 <= window_minutes <= 1440:
             raise HTTPException(status_code=422, detail="window_minutes debe estar entre 15 y 1440")
         return insights.summary(config.cameras, window_minutes)
+
+    @app.post("/api/cameras/{camera_id}/ptz")
+    def move_camera(camera_id: str, body: PtzMove, request: Request) -> dict:
+        require_user(request)
+        origin_guard(request)
+        state = known_camera(camera_id)
+        with state.condition:
+            online = state.jpeg is not None and time.monotonic() - state.seen_mono < 20
+        if not online:
+            raise HTTPException(status_code=409, detail="La cámara no está transmitiendo")
+        try:
+            sequence = ptz.send(camera_id, body.direction)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except BlockingIOError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        return {"queued": True, "sequence": sequence}  # No claim of physical execution/ACK.
+
+    @app.get("/api/edge/{camera_id}/ptz/commands")
+    def edge_ptz_commands(camera_id: str, request: Request, since: int | None = None) -> Response:
+        require_edge(request)
+        known_camera(camera_id)
+        if since is not None and since < 0:
+            raise HTTPException(status_code=422, detail="Secuencia inválida")
+        return JSONResponse(ptz.poll(camera_id, since), headers={"Cache-Control": "no-store"})
 
     @app.post("/api/edge/{camera_id}/frame")
     async def receive_frame(camera_id: str, request: Request) -> dict:
