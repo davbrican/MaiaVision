@@ -1,0 +1,7 @@
+{
+  "cameras": [
+    {"id": "webcam", "name": "Salón", "type": "rtsp", "source_env": "MAIA_SALON_URL"},
+    {"id": "android", "name": "Dormitorio (Android)", "type": "android", "source_env": "MAIA_ANDROID_URL"},
+    {"id": "cam3", "name": "Pasillo", "type": "rtsp", "source_env": "MAIA_PASILLO_URL"}
+  ]
+}

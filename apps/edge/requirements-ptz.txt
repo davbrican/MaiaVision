@@ -1,0 +1,3 @@
+# Optional. Install on the LAN edge only if PTZ cameras are configured.
+# This is a third-party SOAP client; validate C200C firmware with real hardware.
+onvif-zeep==0.2.12

@@ -1,0 +1,49 @@
+{
+  "cameras": [
+    {
+      "id": "tapo1",
+      "name": "C200C salón",
+      "type": "rtsp",
+      "source_env": "MAIA_TAPO1_RTSP",
+      "rotation": 0,
+      "ptz": {
+        "host_env": "MAIA_TAPO1_HOST",
+        "user_env": "MAIA_TAPO1_USER",
+        "password_env": "MAIA_TAPO1_PASSWORD",
+        "port": 2020,
+        "invert_pan": false,
+        "invert_tilt": false
+      }
+    },
+    {
+      "id": "tapo2",
+      "name": "C200C pasillo",
+      "type": "rtsp",
+      "source_env": "MAIA_TAPO2_RTSP",
+      "rotation": 0,
+      "ptz": {
+        "host_env": "MAIA_TAPO2_HOST",
+        "user_env": "MAIA_TAPO2_USER",
+        "password_env": "MAIA_TAPO2_PASSWORD",
+        "port": 2020,
+        "invert_pan": false,
+        "invert_tilt": false
+      }
+    },
+    {
+      "id": "tapo3",
+      "name": "C200C dormitorio",
+      "type": "rtsp",
+      "source_env": "MAIA_TAPO3_RTSP",
+      "rotation": 0,
+      "ptz": {
+        "host_env": "MAIA_TAPO3_HOST",
+        "user_env": "MAIA_TAPO3_USER",
+        "password_env": "MAIA_TAPO3_PASSWORD",
+        "port": 2020,
+        "invert_pan": false,
+        "invert_tilt": false
+      }
+    }
+  ]
+}

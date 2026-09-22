@@ -1,0 +1,9 @@
+# Optional example for Caddy. If the VPS already runs Nginx, use that instead.
+# Change the hostname to your real domain and configure DNS A/AAAA records.
+# MaiaVision listens ONLY on VPS loopback 127.0.0.1:8102.
+maiavision.dbrincau.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8102 {
+        flush_interval -1
+    }
+}

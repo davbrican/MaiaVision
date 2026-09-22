@@ -1,0 +1,5 @@
+{
+  "cameras": [
+    {"id": "webcam", "name": "Webcam MacBook", "type": "webcam", "device": 0}
+  ]
+}

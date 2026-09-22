@@ -1,92 +1,53 @@
-# AGENTS.md — Guía operativa de MaiaVision
+# AGENTS.md — Contrato de desarrollo MaiaVision
 
-## 0. Propósito y contexto
+## Propósito y estado
 
-MaiaVision es un proyecto personal de monitorización de mascotas mediante visión artificial. Su primera usuaria es Maia, aunque el modelo preentrenado reconoce **perros en general**. Se ejecuta **localmente en el ordenador** con webcam: Python + OpenCV + Ultralytics YOLO26. No guarda vídeo por defecto, no necesita API de pago y no tiene relación con ningún proyecto de semáforos.
+MaiaVision es un monitor privado de mascotas para David y Maia. Reconoce perros genéricos, no la identidad individual de Maia. Webcam Mac ahora, Android WiFi, cámaras RTSP/MJPEG y migración futura a Raspberry sin alterar API. No está relacionado con el proyecto de semáforos. Leer `README.md` y `docs/` antes de editar; distinguir siempre implementado de planificado.
 
-El objetivo final es consultar actividad y eventos desde un dashboard, con un recorrido gradual y verificable. La prioridad es que **cada fase funcione antes de incorporar la siguiente**, con separación entre lo implementado y lo previsto. Ver README.md para instrucciones ejecutables.
+Versión multicámara en rama `feat/web-dashboard-multicamera-android` / PR #1. Tests de Python/API y build React en CI; despliegue y pruebas reales de cámara/Mac/Pi/VPS pendientes. Trabajar en rama de feature y PR; no fusionar `main` sin aprobación.
 
-## 1. Contrato del MVP (implementado en código)
+## Arquitectura actual
 
-- CLI `python main.py` con `--camera`, `--model`, `--confidence`, `--movement-threshold`, `--log-interval`, `--output`; salida con Q o Ctrl+C.
-- Captura local con OpenCV; inferencia YOLO26n `yolo26n.pt`, filtro clase COCO 16 (`dog`), confianza configurable.
-- Se elige la detección de perro de mayor confianza; **no hay reidentificación, multi-tracking ni garantía de que sea Maia**.
-- Caja delimitadora, punto central, trayectoria reciente; velocidad aparente estimada en píxeles/segundo usando reloj monotónico entre fotogramas procesados.
-- Estados de observación: `NO DETECTADA`, `SIN REFERENCIA`, `QUIETA`, `MOVIMIENTO`. Eventos `appearance`, `disappearance`, `motion_start`, `motion_stop`, más `sample` periódico.
-- Registro CSV con cabecera `timestamp,event,status,x,y,confidence,speed_px_s` en `data/activity.csv`, local y append. `data/` excluido del control de versiones.
-- Pruebas unitarias de la lógica de actividad sin abrir cámara ni descargar modelos.
+1. `apps/edge/agent.py`: proceso nativo Mac/Raspberry, un hilo por fuente OpenCV `config/*.json` (webcam, Android MJPEG/RTSP, cámaras RTSP, fichero). URLs mediante `source_env` privadas. Detector YOLO opcional y compartido con lock; `ActivityTracker` independiente por cámara; JPEG reducido enviado por HTTPS saliente con `MAIA_EDGE_TOKEN` a `https://maiavision.dbrincau.com/api/edge/{id}/frame`. Reconexión y liberación de recursos; el fichero acaba en EOF.
+2. `apps/backend/main.py`: FastAPI **un worker**, allowlist `MAIA_CAMERAS_JSON`, contraseña PBKDF2, sesión HMAC en cookie HttpOnly/SameSite Strict/Secure, comprobación Origin, limitación intentos, token edge separado. Último fotograma únicamente en RAM, snapshot/MJPEG autenticado, eventos SQLite durante 7 días. No exponer backend al host.
+3. `apps/frontend`: React/TypeScript responsive; login, selector/mosaico, cámara y eventos por API del mismo origen. Jamás enviar URL privada del Android al navegador.
+4. `infra/docker-compose.yml`: API interna puerto `8000` **sólo Docker**; frontend interno `80` publicado como **`127.0.0.1:8102:80` en host**. El VPS ya dispone de Nginx propio; dominio `maiavision.dbrincau.com` (HTTPS 443) debe hacer proxy a `http://127.0.0.1:8102`. No instalar otro Nginx/Caddy en puertos 80/443 ni tocar sitios de otros proyectos. `MAIA_PUBLIC_ORIGIN=https://maiavision.dbrincau.com` y `MAIA_COOKIE_SECURE=true` en VPS. 8102 NO se publica en Internet. El 8080 eventual de IP Webcam es exclusivamente un puerto LAN del Android, ajeno al puerto del VPS.
+5. `main.py` / `maia_vision/`: CLI local legado y lógica compartida, conservar compatibilidad.
 
-El MVP **no** identifica posturas, sueño, emociones, ansiedad, ladridos, entradas/salidas reales de una habitación o velocidad métrica. No incluye todavía zonas, SQLite, audio, imágenes, API, React, alertas, cloud ni cámaras IP. No describir estas capacidades como terminadas.
+## Reglas de seguridad
 
-## 2. Arquitectura y responsabilidades
+- Nunca publicar ni commitear `.env`, `edge.env`, hashes reales, tokens, capturas domésticas, URLs RTSP reales/credenciales, bases de datos, pesos YOLO, vídeos personales. `data/` y secretos ignorados. El agente de casa abre cámaras locales; únicamente el agente contacta el VPS por HTTPS **saliente**, sin abrir el router doméstico.
+- Requerir HTTPS real y cookie Secure antes de exponer dominio. HTTP localhost sólo desarrollo. Una sesión React no protege automáticamente flujos de otro servidor: si se añade MediaMTX, autenticar TODOS los streams. Proteger endpoints de frames con token y allowlist, limitar tamaño, impedir fuga de IP/secretos en logs/respuestas, usar cabeceras no-cache.
+- Comprobar disponibilidad de puerto 8102 también con `ss -ltnp`, no sólo `docker ps`; no interferir con otros contenedores. Antes de reiniciar Nginx: `nginx -t`. No efectuar despliegue remoto sin acceso/credenciales/autorización real.
+- Retener eventos 7 días, no grabar vídeo/audio/imágenes por defecto; fotogramas temporalmente en RAM del backend. Informar a personas que puedan aparecer. Tests CI nunca descargan modelo ni abren cámara.
+- No atribuir estados emocionales ni diagnósticos: `NO DETECTADA` ≠ fuera de casa; `QUIETA` ≠ dormida; píxeles/s ≠ velocidad real; detector de perro ≠ identificador de Maia.
 
-```text
-webcam → OpenCV (main.py) → DogDetector (maia_vision/detector.py)
-                                   ↓ detección / centro / confianza
-                            ActivityTracker (maia_vision/activity.py)
-                                   ↓ estados + eventos
-                         ventana local + CSV local
+## Desarrollo y calidad
+
+- Python 3.11+, TypeScript estricto. Funciones tipadas, tests de seguridad, ingestión, estados y validaciones sin hardware. Un tracker por cámara y detector YOLO opcional compartido bajo lock. Liberar VideoCapture, sesión requests y threads. No abrir webcam desde dos procesos simultáneos.
+- IDs deben coincidir entre `MAIA_CAMERAS_JSON` y `config/*.json`. Rechazar secretos de ejemplo, URL ausentes, IDs desconocidos y JPEG inválidos. Secretos nunca en JSON versionados.
+- Un solo worker Uvicorn: los fotogramas están en RAM local del proceso. No escalar réplicas sin relay compartido. Documentar FPS, latencia, ancho de banda y uso CPU en Mac/Pi; no afirmar 3 inferencias en Pi sin benchmark.
+- Nombres de rutas y eventos estables en inglés; README y guías en español. Actualizar comandos de docs al cambiar puertos. Si falla la cámara real o no hay acceso al VPS, indicar validación pendiente.
+
+## Criterios de aceptación
+
+1. Sin secretos reales, arranque debe fallar (fail closed). Con `.env` correcto, `/api/health` accesible localmente por `127.0.0.1:8102`; web privada muestra cámaras offline antes de arrancar edge.
+2. Endpoints `/api/cameras`, snapshot, stream y eventos requieren cookie (401 sin ella). Login equivocado 401, Origin incorrecto 403; logout borra sesión. Token edge independiente, ID desconocido 404, JPEG corrupto o >500 kB rechazado.
+3. Webcam y Android configurados por variable pueden abrirse simultáneamente sin modificar código, reconectar y cerrar con Ctrl+C; validación manual pendiente. UI responsive permite login, vista única, mosaico, estados y eventos; verificar Safari/iOS con dispositivos reales.
+4. VPS: HTTPS válido, `MAIA_PUBLIC_ORIGIN` exactamente igual a dominio, Nginx host hacia `127.0.0.1:8102` sin buffering, Docker sólo liga loopback, acceso desde datos móviles con autenticación, sin revelar URL de cámaras.
+5. Mantener fases futuras separadas: MediaMTX/WebRTC/HLS, vídeo HD, PWA, alertas, zonas, audio opt-in y ladridos, MFA/multiusuario, descubrimiento ONVIF, grabaciones o identidad multi-perro **no implementados**.
+
+## Comandos
+
+```bash
+python -m pip install -r apps/backend/requirements.txt
+python -m unittest discover -s tests -v
+python -m compileall -q main.py maia_vision apps tests scripts
+cd apps/frontend && npm install && npm run build
+# VPS: docker compose -f infra/docker-compose.yml up -d --build
+# VPS: curl -fsS http://127.0.0.1:8102/api/health
+# Mac hacia VPS: python -m apps.edge.agent --config config/cameras.mac.json --backend https://maiavision.dbrincau.com --no-vision
+# Mac con Docker local: python -m apps.edge.agent --config config/cameras.mac.json --backend http://localhost:8102 --no-vision
 ```
 
-- `main.py`: CLI, validación, captura, gestión de recursos, rendering y persistencia CSV. Mantenerlo como orquestador, no enterrar reglas de dominio en el bucle.
-- `maia_vision/detector.py`: adaptador de inferencia; aislar Ultralytics para poder intercambiar modelos o simular detecciones. Importar librerías costosas al inicializar detector para permitir tests de lógica sin ellas.
-- `maia_vision/activity.py`: lógica pura/dependencias estándar; diferenciar observación, inferencia heurística y evento; estados definidos de forma estable.
-- `tests/`: `unittest` con casos controlados para umbrales, aparición, desaparición y transiciones; no depender de hardware ni red.
-- `.github/workflows/ci.yml`: comprobar sintaxis y pruebas puras. No presentarlo como prueba de inferencia o compatibilidad con webcams.
-
-## 3. Reglas técnicas para agentes y colaboradores
-
-1. **Inspecciona primero el código, README y este AGENTS.md.** No reescribas arquitectura a ciegas ni mezcles un proyecto diferente.
-2. Trabaja en ramas de feature; mantén cambios pequeños y revisables. No mezclar directo a `main` sin la aprobación que corresponda al equipo; solicita revisión al integrar cambios posteriores. Esta inicialización es el bootstrap expresamente solicitado.
-3. Python 3.11+ recomendado; tipado y docstrings para funciones no triviales; preferir biblioteca estándar para reglas y persistencia simple. Evitar introducir Docker, Redis, PostgreSQL, servidores o frontend hasta la fase que los requiera.
-4. No incorporar claves, imágenes domésticas, pesos de modelos, registros, vídeos, archivos `.env`, entornos virtuales ni datos personales al repositorio.
-5. Para cada cambio de actividad/detección añade tests reproducibles y documenta falsos positivos, unidades, umbrales y supuestos. Ejecuta `python -m unittest discover -s tests -v` y `python -m compileall -q main.py maia_vision tests`.
-6. No llamar a una heurística «IA que diagnostica ansiedad». `NO DETECTADA` no es «fuera de la habitación»; `QUIETA` no es «durmiendo»; los píxeles/segundo no son m/s.
-7. Cámaras fijas y un perro visible son hipótesis de fase 1. Contemplar oclusiones, detecciones intermitentes y varios perros como limitaciones; no atribuir identidad sin sistema específico.
-8. Cerrar cámara, ficheros y ventanas en `finally`; errores útiles cuando no hay acceso a cámara. No cambiar a `opencv-python-headless` si se requiere ventana local.
-9. Interfaz inicial en español; nombres de módulos, claves CSV y eventos estables en inglés por compatibilidad. Documentación de usuario en español.
-10. No añadir streaming ni exposición de cámara por red sin autenticación, cifrado, permisos, controles de acceso y una política de retención documentada.
-
-## 4. Roadmap y criterios de aceptación
-
-### Fase 1: monitor local (código inicial incluido)
-
-- Webcam real muestra vídeo y detecta un perro con caja correcta (validación manual pendiente en equipo del usuario).
-- Cambios del centro de caja generan estados y eventos aproximados; sin detección se reinicia referencia; no se mide movimiento físico real.
-- CSV se crea y escribe cada `--log-interval` segundos además de transiciones, sin grabar imagen ni audio.
-- CLI --help, cierre con Q, ejecución de pruebas puras y ausencia de secretos.
-
-### Fase 2: historial y analítica (pendiente)
-
-- Repositorio SQLite, sesiones, eventos, porcentajes de tiempo visible y movimiento observado, gráficos horarios, exportación.
-- Métricas distinguen claramente «no observado» de «reposo»; datos retenidos según configuración.
-- Pruebas de migración y cálculo de métricas con registros sintéticos.
-
-### Fase 3: zonas de interés (pendiente)
-
-- Dibujar/editar polígonos cama, sofá, puerta sobre vista fija y persistir sus coordenadas normalizadas por cámara.
-- Generar eventos de entrada/salida de **zona visible** con histéresis y tolerancia a pérdidas breves; no confundir con salida real de la habitación.
-- Pruebas geométricas de fronteras, redimensionado y oclusiones.
-
-### Fase 4: comportamiento observable + audio (pendiente)
-
-- Actividad repetitiva y periodos largos con reglas configurables y ventanas temporales. No atribuir diagnóstico de salud/estrés.
-- Detección de posibles ladridos requiere micrófono y clasificador de audio independiente; registrar incertidumbre y falsos positivos; opt-in para audio.
-
-### Fase 5: aplicación web y alertas (pendiente)
-
-- FastAPI para histórico y configuración, React + TypeScript responsive para vista en directo, sesiones, gráficas y eventos.
-- Streaming en red solo tras autenticación, TLS y autorización; alertas configurables, evitando notificaciones excesivas.
-- La funcionalidad local debe seguir funcionando sin backend remoto.
-
-### Fase 6: robustez (pendiente)
-
-- Multi-perro y tracking de identidad **evaluados** antes de asignar eventos a Maia; calibración sobre escenas reales, benchmark de FPS/uso de CPU y falsos positivos; tests de integración con vídeos de prueba no personales.
-
-## 5. Privacidad, modelo y licencias
-
-Procesamiento de fotogramas local por defecto. Una conexión puede usarse en instalación y primera descarga de `yolo26n.pt`; no afirmar funcionamiento 100 % sin red antes de disponer de pesos. Para futura publicación/comercialización revisar licencias de Ultralytics, pesos y resto de dependencias; Ultralytics publica opciones AGPL-3.0/Enterprise: https://www.ultralytics.com/license. No otorgar automáticamente al código propio una licencia sin decisión del propietario.
-
-## 6. Definición de terminado
-
-Una tarea termina cuando: implementación coherente con el alcance, tests pertinentes aprobados, documentación CLI/arquitectura actualizada, riesgos y limitaciones explicitados, privacidad respetada y diferencias entre simulación y prueba real declaradas. Si no se puede probar con cámara en el entorno de trabajo, indicar explícitamente «pendiente de validación con webcam real».
+El agente en Mac no debe usar `localhost:8102` cuando el backend vive en el VPS. El puerto local de IP Webcam Android sigue siendo independiente. Revisar licencias Ultralytics antes de comercializar el proyecto; no imponer licencia propia sin decisión del titular.

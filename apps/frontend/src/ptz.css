@@ -1,0 +1,12 @@
+/* Imported by CameraCard; no changes to the shared dashboard stylesheet. */
+.ptz-panel{border-top:1px solid #2b3d53;padding:16px 18px;background:#101d30;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.ptz-panel-heading{display:flex;flex-direction:column;gap:4px;font-size:.86rem}
+.ptz-panel-heading small{color:#95a9bf;font-size:.72rem}
+.ptz-pad{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,39px);gap:4px;justify-content:center}
+.ptz-pad button{display:grid;place-items:center;border:1px solid #3d6073;border-radius:9px;background:#183348;color:#e3f8fa;font-size:1.35rem;line-height:1;touch-action:manipulation}
+.ptz-pad button:focus-visible{outline:2px solid #53d8ad;outline-offset:2px}
+.ptz-pad button:hover:not(:disabled){background:#27576a;border-color:#58d9b1}
+.ptz-pad button:disabled{opacity:.45;cursor:not-allowed}
+.ptz-up{grid-area:1/2}.ptz-left{grid-area:2/1}.ptz-stop{grid-area:2/2;color:#ffb7b7!important}.ptz-right{grid-area:2/3}.ptz-down{grid-area:3/2}
+.ptz-message{font-size:.73rem;color:#b8d9d3;max-width:230px;margin:0;line-height:1.4}
+@media(max-width:600px){.ptz-panel{justify-content:center;text-align:center;flex-direction:column}.ptz-pad{grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,44px)}.ptz-message{max-width:100%}}

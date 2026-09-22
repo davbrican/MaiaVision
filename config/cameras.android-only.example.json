@@ -1,0 +1,5 @@
+{
+  "cameras": [
+    {"id": "android", "name": "Android WiFi", "type": "android", "source_env": "MAIA_ANDROID_URL"}
+  ]
+}

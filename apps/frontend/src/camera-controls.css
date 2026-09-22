@@ -1,0 +1,20 @@
+/* Camera navigation and controls; loaded after the existing dashboard stylesheet. */
+.camera-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.camera-action{border:1px solid #38516a;border-radius:9px;background:#1a3042;color:#e9f5fc;padding:8px 11px;font-size:.76rem;font-weight:700;white-space:nowrap}
+.camera-action:hover:not(:disabled){background:#255344;border-color:#67e0b4}
+.camera-action:disabled{opacity:.45;cursor:not-allowed}
+.camera-screen-button{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;min-height:0;border:0;padding:0;background:transparent;color:inherit;cursor:zoom-in;overflow:hidden}
+.camera-screen-button img{width:100%;height:100%;object-fit:contain;display:block}
+.camera-screen-button .offline{display:flex}
+.camera-screen-hint{position:absolute;right:12px;bottom:12px;padding:7px 11px;border-radius:9px;background:#081522d9;border:1px solid #48616e;color:#e6fcf4;font-size:.74rem;pointer-events:none;opacity:.86;transition:opacity .15s}
+.camera-screen-button:hover .camera-screen-hint,.camera-screen-button:focus-visible .camera-screen-hint{opacity:1;background:#163d3b}
+.camera-screen-button:focus-visible{outline:3px solid #67e0b4;outline-offset:-3px}
+.camera-view-help{color:#91a9bc;font-size:.78rem;margin:0 0 13px;line-height:1.45}
+.camera-snapshot-error{color:#ffd3d8;background:#452734;padding:10px 14px;margin:0;font-size:.8rem}
+.camera-card:fullscreen,.camera-card.fullscreen-fallback{display:flex;flex-direction:column;width:100vw;height:100vh;height:100dvh;max-width:none;border:0;border-radius:0;background:#050a10;overflow:hidden}
+.camera-card.fullscreen-fallback{position:fixed;inset:0;z-index:9999}
+.camera-card:fullscreen .camera-screen,.camera-card.fullscreen-fallback .camera-screen{flex:1;min-height:0;aspect-ratio:auto}
+.camera-card:fullscreen .camera-screen-button,.camera-card.fullscreen-fallback .camera-screen-button{cursor:zoom-out}
+.camera-card:fullscreen .camera-header,.camera-card.fullscreen-fallback .camera-header{flex-shrink:0;background:#101b2a}
+.camera-card:fullscreen footer,.camera-card.fullscreen-fallback footer{flex-shrink:0;background:#101b2a}
+@media(max-width:760px){.camera-header{flex-wrap:wrap}.camera-header-actions{gap:6px}.camera-action{padding:8px 9px}.camera-screen-hint{font-size:.69rem;right:8px;bottom:8px}}
