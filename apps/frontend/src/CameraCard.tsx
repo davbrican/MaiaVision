@@ -4,10 +4,12 @@ export type Camera = {
   id: string;
   name: string;
   online: boolean;
+  ptz: boolean;
   status: string;
   seen_at: string | null;
 };
 
+type Direction = 'left' | 'right' | 'up' | 'down' | 'stop';
 type Props = {
   camera: Camera;
   large: boolean;
@@ -15,7 +17,7 @@ type Props = {
   streamRevision: number;
 };
 
-/** The stream and snapshot stay behind the existing authenticated, same-origin API. */
+/** Streams, snapshots and PTZ commands use only the authenticated same-origin API. */
 export default function CameraCard({ camera, large, onSelect, streamRevision }: Props) {
   const cardRef = useRef<HTMLElement | null>(null);
   const [failed, setFailed] = useState(false);
@@ -23,11 +25,14 @@ export default function CameraCard({ camera, large, onSelect, streamRevision }: 
   const [fallbackFullscreen, setFallbackFullscreen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [snapshotError, setSnapshotError] = useState('');
+  const [moving, setMoving] = useState(false);
+  const [moveMessage, setMoveMessage] = useState('');
   const fullscreen = nativeFullscreen || fallbackFullscreen;
 
   useEffect(() => {
     setFailed(false);
     setSnapshotError('');
+    setMoveMessage('');
   }, [camera.id, camera.online, streamRevision]);
 
   useEffect(() => {
@@ -67,7 +72,6 @@ export default function CameraCard({ camera, large, onSelect, streamRevision }: 
       return;
     }
     if (!cardRef.current?.requestFullscreen) {
-      // iOS Safari does not support fullscreen on arbitrary HTML elements.
       setFallbackFullscreen(true);
       return;
     }
@@ -78,14 +82,37 @@ export default function CameraCard({ camera, large, onSelect, streamRevision }: 
     }
   }
 
+  async function moveCamera(direction: Direction) {
+    if ((!camera.ptz && direction !== 'stop') || !camera.online || moving) return;
+    setMoving(true);
+    setMoveMessage('');
+    try {
+      const response = await fetch(`/api/cameras/${encodeURIComponent(camera.id)}/ptz`, {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction }),
+      });
+      if (!response.ok) {
+        let detail = `Error HTTP ${response.status}`;
+        try { detail = (await response.json()).detail || detail; } catch { /* Non-JSON response */ }
+        throw new Error(detail);
+      }
+      // Queued is not an acknowledgement of physical movement by the camera.
+      setMoveMessage(direction === 'stop' ? 'Orden de parada enviada.' : 'Orden enviada; comprueba el vídeo.');
+    } catch (problem) {
+      setMoveMessage(problem instanceof Error ? problem.message : 'No se pudo enviar la orden.');
+    } finally {
+      setMoving(false);
+    }
+  }
+
   async function downloadSnapshot() {
     if (saving || !camera.online) return;
     setSaving(true);
     setSnapshotError('');
     try {
       const response = await fetch(`/api/cameras/${encodeURIComponent(camera.id)}/snapshot`, {
-        credentials: 'same-origin',
-        cache: 'no-store',
+        credentials: 'same-origin', cache: 'no-store',
       });
       if (!response.ok) {
         throw new Error(response.status === 404
@@ -100,7 +127,6 @@ export default function CameraCard({ camera, large, onSelect, streamRevision }: 
       document.body.appendChild(link);
       link.click();
       link.remove();
-      // Allow the browser to finish the download before releasing the temporary blob.
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (problem) {
       setSnapshotError(problem instanceof Error ? problem.message : 'No se pudo descargar la captura.');
@@ -109,10 +135,8 @@ export default function CameraCard({ camera, large, onSelect, streamRevision }: 
     }
   }
 
-  return <article
-    ref={cardRef}
-    className={'camera-card ' + (large ? 'large ' : '') + (fallbackFullscreen ? 'fullscreen-fallback' : '')}
-  >
+  return <article ref={cardRef}
+    className={'camera-card ' + (large ? 'large ' : '') + (fallbackFullscreen ? 'fullscreen-fallback' : '')}>
     <div className="camera-header">
       <strong>{camera.name}</strong>
       <div className="camera-header-actions">
@@ -148,6 +172,17 @@ export default function CameraCard({ camera, large, onSelect, streamRevision }: 
         </span>
       </button>
     </div>
+    {large && camera.ptz && <div className="ptz-panel" aria-label={`Control de movimiento de ${camera.name}`}>
+      <div className="ptz-panel-heading"><strong>Girar cámara</strong><small>Toques cortos · movimiento manual</small></div>
+      <div className="ptz-pad">
+        <button type="button" className="ptz-up" aria-label="Girar arriba" disabled={moving || !camera.online} onClick={() => void moveCamera('up')}>↑</button>
+        <button type="button" className="ptz-left" aria-label="Girar izquierda" disabled={moving || !camera.online} onClick={() => void moveCamera('left')}>←</button>
+        <button type="button" className="ptz-stop" aria-label="Parar movimiento" disabled={moving || !camera.online} onClick={() => void moveCamera('stop')}>■</button>
+        <button type="button" className="ptz-right" aria-label="Girar derecha" disabled={moving || !camera.online} onClick={() => void moveCamera('right')}>→</button>
+        <button type="button" className="ptz-down" aria-label="Girar abajo" disabled={moving || !camera.online} onClick={() => void moveCamera('down')}>↓</button>
+      </div>
+      {moveMessage && <p className="ptz-message" role="status">{moveMessage}</p>}
+    </div>}
     {snapshotError && <p className="camera-snapshot-error" role="alert">{snapshotError}</p>}
     <footer>
       <span>{camera.online ? camera.status : 'Esperando señal'}</span>
