@@ -36,7 +36,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
     <div className="brand-icon">🐾</div><p className="eyebrow">MONITORIZACIÓN PRIVADA</p><h1>Bienvenido a <em>MaiaVision</em></h1>
     <p className="muted">Tus cámaras y los eventos de Maia, en un único lugar seguro.</p>
     <label htmlFor="username">Usuario</label><input id="username" name="username" autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required />
-    <label htmlFor="password">Contraseña</label><input id="password" name="password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(value)} required />
+    <label htmlFor="password">Contraseña</label><input id="password" name="password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required />
     {error && <p className="error" role="alert">{error}</p>}
     <button className="primary" disabled={pending}>{pending ? 'Comprobando…' : 'Acceder al dashboard →'}</button>
     <p className="privacy">🔒 Acceso privado · Sin grabación de vídeo por defecto</p>
