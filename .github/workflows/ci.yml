@@ -12,6 +12,10 @@ jobs:
           python-version: '3.11'
       - name: Install API test dependencies
         run: pip install -r apps/backend/requirements.txt
+      - name: Validate optional ONVIF dependency
+        run: |
+          pip install -r apps/edge/requirements-ptz.txt
+          python -c 'from onvif import ONVIFCamera; print("ONVIF import OK")'
       - name: Check Python syntax
         run: python -m compileall -q main.py maia_vision apps tests scripts
       - name: Run unit and API tests
